@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" >
+<title>CS 174A - Project</title>
+
+<style type="text/css" media="screen">
+#text-canvas {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    z-index: 10;
+}
+</style>
+
+<script id="vertex-shader" type="x-shader/x-vertex">
+precision mediump float;
+precision mediump int;
+
+// ========= INPUT from each 3D object =========
+/* The meanings of shadingType:
+	constant: 0,
+	phong: 1,
+	texture: 2 (with phong shading)
+	reflective: 3 (with phong shading and texture)
+	*/
+uniform int shadingType;
+attribute vec4 vPosition;	// vertex position in *object* coord
+attribute vec4 vColor;		// only for constant shading
+attribute vec4 vNormal;		// vertex normals in *object* coord
+attribute vec2 vTexCoord;
+uniform mat4 modelMatrix;	// From object coord to world coord
+
+uniform int useSpecularTexture;		// Whether we use specular texture or not
+uniform sampler2D diffuseTexture;
+uniform sampler2D specularTexture;
+uniform sampler2D reflectTexture;
+
+uniform int useReflectionMatrix;
+uniform mat4 reflectionMatrix;
+
+// ========= INPUT from the camera =========
+uniform mat4 projectionMatrix;	// From camera coord to clip coord
+uniform mat4 viewMatrix;	// From world coord to camera coord
+uniform vec3 cameraPosition;
+
+// ========= INPUT from both the light source and material =========
+uniform vec4 lightPosition;
+uniform vec4 ambientProduct;
+uniform vec4 diffuseProduct;
+uniform vec4 specularProduct;
+uniform float shininess;
+
+// OUTPUT to fragment shader
+varying vec4 fColor;
+varying vec2 fTexCoord;
+varying vec3 N, L, E;
+varying float d;
+
+vec3 vec4_to_vec3 (vec4 v) {
+	return v.xyz / v.w;
+}
+
+void main (void) {
+	if (shadingType == 0) {
+		// Constant
+		fColor = vColor;
+	} else {
+		// Phong or Texture w/ phong
+		N = normalize((modelMatrix * vec4(vNormal.xyz, 0)).xyz);
+		L = vec4_to_vec3(lightPosition) - vec4_to_vec3(modelMatrix * vPosition);
+		d = length(L);
+		L = normalize(L);
+		E = normalize(cameraPosition - vec4_to_vec3(modelMatrix * vPosition));
+		if (shadingType == 2 || shadingType == 3) {
+			// Texture or reflective
+			fTexCoord = vTexCoord;
+		}
+	}
+	if (useReflectionMatrix != 0) {
+		gl_Position = projectionMatrix * viewMatrix * reflectionMatrix * modelMatrix * vPosition;
+	} else {
+		gl_Position = projectionMatrix * viewMatrix * modelMatrix * vPosition;
+	}
+}
+</script>
+
+<script id="fragment-shader" type="x-shader/x-fragment">
+precision mediump float;
+precision mediump int;
+
+uniform int shadingType;
+uniform vec4 lightPosition;
+uniform vec4 ambientProduct;
+uniform vec4 diffuseProduct;
+uniform vec4 specularProduct;
+uniform float shininess;
+
+uniform int useSpecularTexture;
+uniform sampler2D diffuseTexture;
+uniform sampler2D specularTexture;
+uniform sampler2D reflectTexture;
+
+varying vec4 fColor;
+varying vec2 fTexCoord;		// texture coord
+varying vec3 N, L, E;
+varying float d;
+
+void main() {
+	float a = 0.05, b = 0.006, c = 0.0;
+	if (shadingType == 0) {
+		// Constant
+		gl_FragColor = fColor;
+		gl_FragColor = vec4(1, 0, 0, 1);
+	} else {
+		// Phong or Texture w/ phong
+		vec3 NN = normalize(N);
+		vec3 LL = normalize(L);
+		vec3 EE = normalize(E);
+		vec3 H = normalize(LL + EE);	// halfway vector
+		vec4 ambientComp;
+		if (shadingType == 1) {			// Phong
+			ambientComp = ambientProduct;
+		} else {	// Texture or reflective
+			ambientComp = texture2D(diffuseTexture, fTexCoord) * ambientProduct;
+		}
+
+		// ====== Calculate the diffuse component ======
+		vec4 diffuseComp;
+		if (shadingType == 1) {			// Phong
+			diffuseComp = diffuseProduct * max(dot(LL, NN), 0.0);
+		} else if (shadingType == 2) {	// Texture
+			diffuseComp = texture2D(diffuseTexture, fTexCoord) * diffuseProduct * max(dot(LL, NN), 0.0);
+		} else {	// Reflective
+			vec2 tc = gl_FragCoord.xy;
+			tc.x /= 960.0;
+			tc.y /= 540.0;
+			float reflectRatio = 0.2;
+			diffuseComp =  ((1.0 - reflectRatio) * texture2D(diffuseTexture, fTexCoord)
+								+ reflectRatio * texture2D(reflectTexture, tc))
+							* diffuseProduct * max(dot(LL, NN), 0.0);
+
+		}
+
+		// ====== Calculate the specular component ======
+		vec4 specularComp;
+		if (useSpecularTexture == 0) {
+			specularComp = specularProduct * max(pow(max(dot(NN, H), 0.0), shininess), 0.0);
+		} else {
+			specularComp = texture2D(specularTexture, fTexCoord) * specularProduct
+							* max(pow(max(dot(NN, H), 0.0), shininess), 0.0);
+		}
+		gl_FragColor = vec4((ambientComp + (diffuseComp + specularComp) / (a + b * d + c * d * d)).xyz, 1.0);
+	}
+}
+</script>
+
+<script type="text/javascript" src="webgl-utils.js"></script>
+<script type="text/javascript" src="initShaders.js"></script>
+<script type="text/javascript" src="MV.js"></script>
+<script type="text/javascript" src="obj_ball.js"></script>
+<script type="text/javascript" src="obj_pin.js"></script>
+<script type="text/javascript" src="gutter.js"></script>
+<script type="text/javascript" src="ObjFile.js"></script>
+<script type="text/javascript" src="RigidBody.js"></script>
+<script type="text/javascript" src="project.js"></script>
+</head>
+
+<body bgcolor="black">
+<canvas id="gl-canvas" width="960" height="540">
+Oops ... your browser doesn't support the HTML5 canvas element
+</canvas>
+<canvas id="text-canvas" width="960" height="540"></canvas>
+
+<img id="texture-alley-diffuse" src="4.jpg" hidden></img>
+<img id="texture-gutter-diffuse" src="resources/gutter_diff.png" hidden></img>
+<img id="texture-ballpin-diffuse" src="resources/bs_diff.jpg" hidden></img>
+<img id="texture-logo-diffuse" src="resources/logo2.png" hidden></img>
+</body>
+</html>
